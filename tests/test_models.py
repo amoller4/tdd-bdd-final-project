@@ -27,7 +27,7 @@ import os
 import logging
 import unittest
 from decimal import Decimal
-from service.models import Product, Category, db
+from service.models import Product, Category, db, DataValidationError
 from service import app
 from tests.factories import ProductFactory
 
@@ -133,6 +133,14 @@ class TestProductModel(unittest.TestCase):
         self.assertEqual(products[0].id, original_id)
         self.assertEqual(products[0].description, "testing")
 
+    def test_update_with_empty_id(self):
+        """It should raise a DataValidationError"""
+        product = ProductFactory()
+        product.id = None
+        with self.assertRaises(Exception) as context:
+            product.update()
+        self.assertIn("Update called with empty ID field", str(context.exception))
+
     def test_delete_a_product(self):
         """It should Delete a Product"""
         product = ProductFactory()
@@ -189,3 +197,64 @@ class TestProductModel(unittest.TestCase):
         self.assertEqual(found.count(), count)
         for product in found:
             self.assertEqual(product.category, category)
+
+    def test_deserialize_invalid_available_type(self):
+        """It should raise DataValidationError if 'available' is not a boolean"""
+        product = Product()
+        invalid_data = {
+            "name": "Sample",
+            "description": "Test product",
+            "price": "10.00",
+            "available": "yes",  # invalid type
+            "category": "ELECTRONICS"
+        }
+        with self.assertRaises(DataValidationError) as context:
+            product.deserialize(invalid_data)
+        self.assertIn("Invalid type for boolean [available]", str(context.exception))
+
+    def test_deserialize_invalid_category_attribute(self):
+        """It should raise DataValidationError if category value is invalid"""
+        product = Product()
+        invalid_data = {
+            "name": "Sample",
+            "description": "Test product",
+            "price": "10.00",
+            "available": True,
+            "category": "INVALID_CATEGORY"  # not part of Category enum
+        }
+        with self.assertRaises(DataValidationError) as context:
+            product.deserialize(invalid_data)
+        self.assertIn("Invalid attribute", str(context.exception))
+
+    def test_deserialize_type_error(self):
+        """It should raise DataValidationError if input is not a dictionary"""
+        product = Product()
+        with self.assertRaises(DataValidationError) as context:
+            product.deserialize(None)  # not a dict
+        self.assertIn("Invalid product: body of request contained bad or no data", str(context.exception))
+
+    def test_find_by_price(self):
+        """It should find Products by price"""
+        # Create products with various prices
+        product1 = ProductFactory(price=Decimal("10.99"))
+        product2 = ProductFactory(price=Decimal("10.99"))
+        product3 = ProductFactory(price=Decimal("19.99"))
+        product1.create()
+        product2.create()
+        product3.create()
+
+        # Call find_by_price with Decimal input
+        results = Product.find_by_price(Decimal("10.99")).all()
+        self.assertEqual(len(results), 2)
+        for product in results:
+            self.assertEqual(product.price, Decimal("10.99"))
+
+        # Call find_by_price with string input
+        results_str = Product.find_by_price(' "10.99" ').all()
+        self.assertEqual(len(results_str), 2)
+        for product in results_str:
+            self.assertEqual(product.price, Decimal("10.99"))
+
+        # Price not found
+        results_none = Product.find_by_price(Decimal("99.99")).all()
+        self.assertEqual(len(results_none), 0)
